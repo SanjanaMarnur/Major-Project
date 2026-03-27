@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crop Health Monitor</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+            background: #f4f9f4;
+        }
+
+        #map {
+            height: 400px;
+            width: 80%;
+            margin: auto;
+        }
+
+        .legend {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+            text-align: left;
+            line-height: 1.2;
+            font-size: 12px;
+        }
+        .legend-title {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .legend-scale {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 2px;
+            height: 10px;
+            margin: 6px 0 4px;
+        }
+        .legend-scale div {
+            height: 10px;
+        }
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            color: #333;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: green;
+            color: white;
+            border: none;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2>🌱 Crop Health Monitoring</h2>
+
+<div id="map"></div>
+
+<form method="POST">
+    <input type="hidden" id="lat" name="lat">
+    <input type="hidden" id="lon" name="lon">
+
+    Year: <input type="text" name="year" value="{{ year or 2021 }}"><br><br>
+    Month (6-10): <input type="text" name="month" value="{{ month or 8 }}"><br><br>
+
+    <button type="submit">Analyze</button>
+</form>
+
+{% if result %}
+    <h3>🌾 Crop Health: {{ result }}</h3>
+{% endif %}
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+    var initialLat = {% if lat is not none %}{{ lat }}{% else %}16.20{% endif %};
+    var initialLon = {% if lon is not none %}{{ lon }}{% else %}77.37{% endif %};
+    var initialZoom = {% if lat is not none and lon is not none %}12{% else %}10{% endif %};
+
+    var map = L.map('map', { preferCanvas: true }).setView([initialLat, initialLon], initialZoom);
+
+    // Satellite + "hybrid" labels (no API key required)
+    var esriSat = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { attribution: 'Tiles © Esri' }
+    );
+    var osmLabels = L.tileLayer(
+        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        { attribution: '© OpenStreetMap', opacity: 0.35 }
+    );
+
+    esriSat.addTo(map);
+    osmLabels.addTo(map);
+
+    var baseLayers = {
+        "Satellite (Esri)": esriSat
+    };
+    var overlayLayers = {
+        "Hybrid labels": osmLabels
+    };
+
+    var marker;
+    var ndviLayer;
+    var healthRing;
+
+    function healthColor(label) {
+        if (!label) return '#2c7be5';
+        var v = String(label).toLowerCase();
+        if (v.includes('healthy') || v.includes('good')) return '#1a9850';
+        if (v.includes('moderate') || v.includes('average')) return '#fdae61';
+        if (v.includes('poor') || v.includes('unhealthy') || v.includes('bad')) return '#d73027';
+        return '#2c7be5';
+    }
+
+    function setPoint(lat, lon, pan) {
+        document.getElementById("lat").value = lat;
+        document.getElementById("lon").value = lon;
+
+        if (marker) map.removeLayer(marker);
+        marker = L.marker([lat, lon]).addTo(map);
+
+        if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 12));
+    }
+
+    function updateHealthRing(lat, lon) {
+        var label = {% if result %}{{ result|tojson }}{% else %}null{% endif %};
+        var color = healthColor(label);
+
+        if (healthRing) map.removeLayer(healthRing);
+        healthRing = L.circle([lat, lon], {
+            radius: 2000,
+            color: color,
+            weight: 3,
+            fillColor: color,
+            fillOpacity: 0.08
+        }).addTo(map);
+    }
+
+    async function loadNdviOverlay(lat, lon) {
+        var year = document.querySelector('input[name="year"]').value || '2021';
+        var month = document.querySelector('input[name="month"]').value || '8';
+
+        var url = `/api/ndvi-map?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.tileUrl) return;
+
+        if (ndviLayer) map.removeLayer(ndviLayer);
+        ndviLayer = L.tileLayer(data.tileUrl, { opacity: 0.65 });
+        ndviLayer.addTo(map);
+        overlayLayers["NDVI"] = ndviLayer;
+
+        // Rebuild layer control once NDVI exists
+        if (window._layerControl) map.removeControl(window._layerControl);
+        window._layerControl = L.control.layers(baseLayers, overlayLayers, { collapsed: true }).addTo(map);
+    }
+
+    // Legend for NDVI palette
+    var legend = L.control({ position: 'bottomright' });
+    legend.onAdd = function () {
+        var div = L.DomUtil.create('div', 'legend');
+        div.innerHTML = `
+            <div class="legend-title">NDVI (Crop vigor)</div>
+            <div class="legend-scale">
+                <div style="background:#d73027"></div>
+                <div style="background:#f46d43"></div>
+                <div style="background:#fdae61"></div>
+                <div style="background:#fee08b"></div>
+                <div style="background:#d9ef8b"></div>
+                <div style="background:#a6d96a"></div>
+                <div style="background:#1a9850"></div>
+            </div>
+            <div class="legend-labels"><span>Low</span><span>High</span></div>
+        `;
+        return div;
+    };
+    legend.addTo(map);
+
+    map.on('click', function(e) {
+        var lat = e.latlng.lat;
+        var lon = e.latlng.lng;
+
+        setPoint(lat, lon, true);
+        loadNdviOverlay(lat, lon);
+        updateHealthRing(lat, lon);
+    });
+
+    // If server provided coordinates (after POST), center + show marker + NDVI + health ring.
+    if (initialLat && initialLon) {
+        setPoint(initialLat, initialLon, false);
+        loadNdviOverlay(initialLat, initialLon);
+        updateHealthRing(initialLat, initialLon);
+    }
+</script>
+
+</body>
+</html>
