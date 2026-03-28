@@ -16,7 +16,7 @@ label_encoder = joblib.load("model/label_encoder.pkl")
 # 🔥 NDVI FUNCTION
 def get_ndvi_timeseries(lat, lon, year, current_month):
 
-    geometry = ee.Geometry.Point([lon, lat]).buffer(2000)
+    geometry = ee.Geometry.Point([lon, lat]).buffer(800)
 
     collection = ee.ImageCollection("COPERNICUS/S2_HARMONIZED") \
         .filterBounds(geometry) \
@@ -116,11 +116,18 @@ def api_analyze():
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
 
     ndvi_values = get_ndvi_timeseries(lat, lon, year, month)
+    
+    # Feature extraction (requires june, july, aug, sept, octo)
     features = create_features(ndvi_values)
+    
+    # Predict using the loaded joblib model
     pred = model.predict([features])[0]
     result = label_encoder.inverse_transform([pred])[0]
+    
+    # Calculate Seasonal Mean for UI contextual display
+    seasonal_mean = sum(ndvi_values) / len(ndvi_values) if len(ndvi_values) > 0 else 0
 
-    return jsonify({"result": result})
+    return jsonify({"result": result, "seasonal_mean": round(seasonal_mean, 4)})
 
 
 @app.route("/api/ndvi-map", methods=["GET"])
