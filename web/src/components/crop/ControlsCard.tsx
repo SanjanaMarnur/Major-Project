@@ -1,8 +1,6 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -10,25 +8,16 @@ import { Calendar as CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 
 type Props = {
-  lat: number;
-  lon: number;
-  year: number;
-  month: number;
-  onChange: (next: { lat: number; lon: number; year: number; month: number }) => void;
+  polygonVertices: number;
+  date: Date;
+  onChange: (date: Date) => void;
   onAnalyze: () => void;
   analyzing?: boolean;
 };
 
-const MONTH_NAMES = [
-  "", "January", "February", "March", "April", "May",
-  "June", "July", "August", "September", "October", "November", "December",
-];
-
 export function ControlsCard({
-  lat,
-  lon,
-  year,
-  month,
+  polygonVertices,
+  date,
   onChange,
   onAnalyze,
   analyzing,
@@ -41,33 +30,36 @@ export function ControlsCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="px-5 pb-5 space-y-5">
-        {/* Coordinates */}
+        {/* Polygon Info */}
         <div>
-          <p className="text-xs text-muted-foreground mb-2.5 font-medium">Coordinates</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="lat" className="text-xs text-muted-foreground">Latitude</Label>
-              <Input
-                id="lat"
-                inputMode="decimal"
-                value={String(lat)}
-                onChange={(e) =>
-                  onChange({ lat: Number(e.target.value), lon, year, month })
-                }
-                className="h-8 text-sm"
-              />
+          <p className="text-xs text-muted-foreground mb-2.5 font-medium">Field Region</p>
+          <div
+            className="flex items-center gap-3 rounded-lg border px-4 py-3"
+            style={{
+              borderColor: polygonVertices >= 3 ? "rgba(16,185,129,0.4)" : "var(--border)",
+              background: polygonVertices >= 3 ? "rgba(16,185,129,0.06)" : "transparent",
+            }}
+          >
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg" style={{
+              background: polygonVertices >= 3 ? "rgba(16,185,129,0.15)" : "rgba(100,100,100,0.1)",
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={polygonVertices >= 3 ? "#10b981" : "currentColor"} strokeWidth="2">
+                <polygon points="12,2 22,8.5 18,20 6,20 2,8.5" strokeLinejoin="round" />
+              </svg>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="lon" className="text-xs text-muted-foreground">Longitude</Label>
-              <Input
-                id="lon"
-                inputMode="decimal"
-                value={String(lon)}
-                onChange={(e) =>
-                  onChange({ lat, lon: Number(e.target.value), year, month })
-                }
-                className="h-8 text-sm"
-              />
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                {polygonVertices >= 3
+                  ? `${polygonVertices} vertices defined`
+                  : polygonVertices > 0
+                    ? `${polygonVertices} point${polygonVertices > 1 ? "s" : ""} — need more`
+                    : "No region drawn"}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {polygonVertices >= 3
+                  ? "Polygon ready for analysis"
+                  : "Use 'Draw Field' on the map"}
+              </p>
             </div>
           </div>
         </div>
@@ -82,35 +74,30 @@ export function ControlsCard({
               >
                 <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
                 <span>
-                  {format(new Date(year, month - 1, 15), "MMMM yyyy")}
+                  {format(date, "PPP")}
                 </span>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0 z-[10000]" align="start">
                 <Calendar
                   mode="single"
-                  selected={new Date(year, month - 1, 15)}
+                  selected={date}
                   onSelect={(d) => {
                     if (!d) return;
-                    onChange({
-                      lat,
-                      lon,
-                      year: d.getFullYear(),
-                      month: d.getMonth() + 1,
-                    });
+                    onChange(d);
                   }}
-                  defaultMonth={new Date(year, month - 1, 15)}
+                  defaultMonth={date}
                   initialFocus
                 />
               </PopoverContent>
             </Popover>
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">Select a month between June and October for optimal NDVI analysis.</p>
+          <p className="mt-2 text-[11px] text-muted-foreground">Select an exact date to analyze crop health for that period.</p>
         </div>
 
         <Button
           className="w-full h-9 font-semibold tracking-wide transition-all duration-200"
           onClick={onAnalyze}
-          disabled={analyzing}
+          disabled={analyzing || polygonVertices < 3}
         >
           {analyzing ? (
             <span className="flex items-center gap-2">

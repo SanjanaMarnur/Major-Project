@@ -1,22 +1,48 @@
 from flask import Flask, request, jsonify, redirect
 import ee
-import joblib
-import numpy as np
 
 app = Flask(__name__)
 
 # Initialize GEE
 ee.Initialize(project='seventh-sunbeam-387910')
 
-# Load model
-model = joblib.load("model/crop_health_model.pkl")
-label_encoder = joblib.load("model/label_encoder.pkl")
+def classify_ndvi(mean):
+    if mean < 0.18:
+        return "Stressed"
+    elif mean <= 0.33:
+        return "Moderate"
+    else:
+        return "Healthy"
+
+def get_crop_stage(month):
+    # Kharif crop stages approximation
+    if month in (6, 7): return "Vegetative Stage"
+    elif month == 8: return "Flowering Stage"
+    elif month == 9: return "Grain Filling Stage"
+    elif month >= 10: return "Harvest/Maturity Stage"
+    return "Unknown Stage"
+
+
+def _build_geometry(data):
+    """
+    Build an ee.Geometry from the request data.
+    Supports:
+      - polygon: [{lat, lon}, ...] → ee.Geometry.Polygon
+      - lat, lon → ee.Geometry.Point.buffer(800) (legacy fallback)
+    """
+    polygon = data.get("polygon")
+    if polygon and len(polygon) >= 3:
+        # Convert [{lat, lon}, ...] → [[lon, lat], ...] for GEE
+        coords = [[pt["lon"], pt["lat"]] for pt in polygon]
+        return ee.Geometry.Polygon([coords])
+    else:
+        lat = float(data["lat"])
+        lon = float(data["lon"])
+        return ee.Geometry.Point([lon, lat]).buffer(800)
 
 
 # 🔥 NDVI FUNCTION
-def get_ndvi_timeseries(lat, lon, year, current_month):
-
-    geometry = ee.Geometry.Point([lon, lat]).buffer(800)
+def get_ndvi_timeseries(geometry, year, current_month):
 
     collection = ee.ImageCollection("COPERNICUS/S2_HARMONIZED") \
         .filterBounds(geometry) \
@@ -65,9 +91,7 @@ def get_ndvi_timeseries(lat, lon, year, current_month):
 
 
 # 🔥 NDVI IMAGE FOR MAP OVERLAY (single month)
-def get_ndvi_image(lat, lon, year, month):
-    geometry = ee.Geometry.Point([lon, lat]).buffer(2000)
-
+def get_ndvi_image(geometry, year, month):
     # Restrict to the requested month (simple 1-month composite)
     start = ee.Date.fromYMD(year, month, 1)
     end = start.advance(1, "month")
@@ -84,12 +108,7 @@ def get_ndvi_image(lat, lon, year, month):
     return ndvi.clip(geometry)
 
 
-# 🔥 FEATURE ENGINEERING
-def create_features(ndvi_values):
-    june, july, aug, sept, octo = ndvi_values
-    growth_rate = sept - june
-    ndvi_range = max(ndvi_values) - min(ndvi_values)
-    return [june, july, aug, sept, octo, growth_rate, ndvi_range]
+
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -103,51 +122,82 @@ def index():
 def api_analyze():
     """
     JSON API for Next.js frontend.
-    Body: { lat, lon, year, month }
-    Returns: { result }
+    Body: { polygon: [{lat, lon}, ...], year, month }
+       or: { lat, lon, year, month } (legacy)
+    Returns: { result, seasonal_mean }
     """
     data = request.get_json(silent=True) or {}
     try:
-        lat = float(data["lat"])
-        lon = float(data["lon"])
         year = int(data.get("year", 2021))
         month = int(data.get("month", 8))
+        geometry = _build_geometry(data)
     except Exception as e:
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
 
-    ndvi_values = get_ndvi_timeseries(lat, lon, year, month)
+    ndvi_values = get_ndvi_timeseries(geometry, year, month)
     
-    # Feature extraction (requires june, july, aug, sept, octo)
-    features = create_features(ndvi_values)
-    
-    # Predict using the loaded joblib model
-    pred = model.predict([features])[0]
-    result = label_encoder.inverse_transform([pred])[0]
-    
-    # Calculate Seasonal Mean for UI contextual display
+    # Calculate seasonal and monthly statuses
     seasonal_mean = sum(ndvi_values) / len(ndvi_values) if len(ndvi_values) > 0 else 0
+    overall_health = classify_ndvi(seasonal_mean)
+    
+    # Get the NDVI value for the currently selected month
+    # NDVI values array corresponds to [June, July, August, September, October]
+    month_idx = month - 6
+    if 0 <= month_idx < len(ndvi_values):
+        selected_month_ndvi = ndvi_values[month_idx]
+    else:
+        selected_month_ndvi = ndvi_values[-1] if len(ndvi_values) > 0 else 0
+        
+    selected_month_health = classify_ndvi(selected_month_ndvi)
+    crop_stage = get_crop_stage(month)
+    monthly_status = [classify_ndvi(val) for val in ndvi_values]
 
-    return jsonify({"result": result, "seasonal_mean": round(seasonal_mean, 4)})
+    return jsonify({
+        "overall_health": overall_health,
+        "seasonal_mean": round(seasonal_mean, 4),
+        "selected_month_health": selected_month_health,
+        "selected_month_ndvi": round(selected_month_ndvi, 4),
+        "crop_stage": crop_stage,
+        "ndvi": [round(v, 4) for v in ndvi_values],
+        "monthly_status": monthly_status
+    })
 
 
-@app.route("/api/ndvi-map", methods=["GET"])
+@app.route("/api/ndvi-map", methods=["GET", "POST"])
 def ndvi_map():
     """
-    Returns an Earth Engine tile layer descriptor (mapid/token) for NDVI,
-    to be used from Leaflet as a raster overlay.
+    Returns an Earth Engine tile layer descriptor (mapid/token) for NDVI.
+    Accepts POST with polygon or GET with lat/lon (legacy).
     """
     try:
-        lat = float(request.args["lat"])
-        lon = float(request.args["lon"])
-        year = int(request.args.get("year", 2021))
-        month = int(request.args.get("month", 8))
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            year = int(data.get("year", 2021))
+            month = int(data.get("month", 8))
+            geometry = _build_geometry(data)
+            # Get center from polygon centroid
+            polygon_pts = data.get("polygon", [])
+            if polygon_pts:
+                center_lat = sum(p["lat"] for p in polygon_pts) / len(polygon_pts)
+                center_lon = sum(p["lon"] for p in polygon_pts) / len(polygon_pts)
+            else:
+                center_lat = float(data.get("lat", 0))
+                center_lon = float(data.get("lon", 0))
+        else:
+            lat = float(request.args["lat"])
+            lon = float(request.args["lon"])
+            year = int(request.args.get("year", 2021))
+            month = int(request.args.get("month", 8))
+            geometry = ee.Geometry.Point([lon, lat]).buffer(2000)
+            center_lat = lat
+            center_lon = lon
     except Exception as e:
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
 
     if month < 1 or month > 12:
         return jsonify({"error": "month must be between 1 and 12"}), 400
 
-    ndvi = get_ndvi_image(lat, lon, year, month)
+    ndvi = get_ndvi_image(geometry, year, month)
     vis = {
         "min": 0.0,
         "max": 1.0,
@@ -164,7 +214,6 @@ def ndvi_map():
 
     map_id_dict = ee.Image(ndvi).getMapId(vis)
 
-    # Leaflet URL template for EE tiles (mapid/token style)
     tile_url = (
         "https://earthengine.googleapis.com/map/"
         + map_id_dict["mapid"]
@@ -176,7 +225,7 @@ def ndvi_map():
         {
             "tileUrl": tile_url,
             "vis": vis,
-            "center": {"lat": lat, "lon": lon},
+            "center": {"lat": center_lat, "lon": center_lon},
             "bufferMeters": 2000,
         }
     )

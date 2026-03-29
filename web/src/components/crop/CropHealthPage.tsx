@@ -4,10 +4,9 @@ import dynamic from "next/dynamic";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
-import { AnalyzePanel } from "@/components/crop/AnalyzePanel";
 import { ControlsCard } from "@/components/crop/ControlsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { AnalyzeResponse } from "@/lib/types";
+import { useRouter } from "next/navigation";
 
 const ThemeToggle = dynamic(
   () => import("@/components/ThemeToggle").then((m) => m.ThemeToggle),
@@ -19,57 +18,72 @@ const MapView = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-[580px] w-full rounded-2xl border border-border bg-muted animate-pulse flex items-center justify-center text-muted-foreground text-sm">
+      <div className="h-[600px] w-full rounded-2xl border border-border bg-muted animate-pulse flex items-center justify-center text-muted-foreground text-sm">
         Loading map…
       </div>
     ),
   },
 );
 
-export function CropHealthPage() {
-  const [lat, setLat] = useState(16.2008);
-  const [lon, setLon] = useState(77.3616);
-  const [year, setYear] = useState(2021);
-  const [month, setMonth] = useState(8);
+type LatLng = { lat: number; lng: number };
 
-  const [result, setResult] = useState<string | null>(null);
-  const [seasonalMean, setSeasonalMean] = useState<number | null>(null);
+export function CropHealthPage() {
+  const router = useRouter();
+  const [polygon, setPolygon] = useState<LatLng[]>([]);
+  const [date, setDate] = useState<Date>(new Date(2021, 7, 15)); // Default Aug 15 2021
+
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const onPickLocation = useCallback((nextLat: number, nextLon: number) => {
-    setLat(nextLat);
-    setLon(nextLon);
-    setResult(null);
-    setSeasonalMean(null);
+  const onAddVertex = useCallback((pt: LatLng) => {
+    setPolygon((prev) => [...prev, pt]);
+  }, []);
+
+  const onRemoveLastVertex = useCallback(() => {
+    setPolygon((prev) => prev.slice(0, -1));
+    setError(null);
+  }, []);
+
+  const onClearPolygon = useCallback(() => {
+    setPolygon([]);
     setError(null);
   }, []);
 
   const onChange = useCallback(
-    (next: { lat: number; lon: number; year: number; month: number }) => {
-      setLat(next.lat);
-      setLon(next.lon);
-      setYear(next.year);
-      setMonth(next.month);
+    (next: Date) => {
+      setDate(next);
       setError(null);
     },
     [],
   );
 
   const onAnalyze = useCallback(async () => {
+    if (polygon.length < 3) {
+      toast.error("Draw a polygon with at least 3 vertices first");
+      return;
+    }
+
     setAnalyzing(true);
     setError(null);
     try {
       const resp = await fetch("/api/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lat, lon, year, month }),
+        body: JSON.stringify({
+          polygon: polygon.map((p) => ({ lat: p.lat, lon: p.lng })),
+          year: date.getFullYear(),
+          month: date.getMonth() + 1,
+        }),
       });
-      const data = (await resp.json()) as AnalyzeResponse & { error?: string };
+      const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "Analyze failed");
-      setResult(data.result ?? null);
-      setSeasonalMean(data.seasonal_mean ?? null);
+      
+      // Store in session storage to pass to Results page
+      sessionStorage.setItem("crop_analysis_result", JSON.stringify(data));
+      sessionStorage.setItem("crop_analysis_date", date.toISOString());
+      
       toast.success("Analysis complete");
+      router.push("/results");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Analyze failed";
       setError(msg);
@@ -77,7 +91,11 @@ export function CropHealthPage() {
     } finally {
       setAnalyzing(false);
     }
-  }, [lat, lon, year, month]);
+  }, [polygon, date, router]);
+
+  const onPolygonComplete = useCallback((completedPolygon: LatLng[]) => {
+    setPolygon(completedPolygon);
+  }, []);
 
   return (
     <div className="min-h-[100dvh] bg-background">
@@ -96,7 +114,7 @@ export function CropHealthPage() {
               Crop Health Monitor
             </h1>
             <p className="text-[11px] text-muted-foreground leading-none mt-0.5">
-              Satellite NDVI · Karnataka Region
+              Satellite NDVI · Polygon Field Analysis
             </p>
           </div>
 
@@ -114,9 +132,9 @@ export function CropHealthPage() {
       <div className="border-b border-border/40 bg-gradient-to-r from-primary/8 via-transparent to-transparent">
         <div className="mx-auto max-w-7xl px-5 py-5">
           <p className="text-xs text-muted-foreground max-w-lg leading-relaxed">
-            Click anywhere on the map to select a field location, then press{" "}
-            <span className="text-primary font-medium">Analyze</span> to predict
-            crop vigor using Copernicus Sentinel-2 NDVI data.
+            Draw a polygon on the map to select your field boundary, then press{" "}
+            <span className="text-primary font-medium">Submit</span> to analyze
+            crop health using Copernicus Sentinel-2 NDVI data.
           </p>
         </div>
       </div>
@@ -127,16 +145,12 @@ export function CropHealthPage() {
           {/* ─ Left panel ─ */}
           <div className="space-y-4">
             <ControlsCard
-              lat={lat}
-              lon={lon}
-              year={year}
-              month={month}
+              polygonVertices={polygon.length}
+              date={date}
               onChange={onChange}
               onAnalyze={onAnalyze}
               analyzing={analyzing}
             />
-
-            <AnalyzePanel result={result} seasonalMean={seasonalMean} loading={analyzing} error={error} />
 
             <Card className="border-border/60">
               <CardHeader className="pb-2 pt-4 px-4">
@@ -146,8 +160,10 @@ export function CropHealthPage() {
               </CardHeader>
               <CardContent className="px-4 pb-4 space-y-2.5">
                 {[
-                  { icon: "📍", text: "Click on the map to pick a field location" },
-                  { icon: "🛰️", text: "NDVI overlay loads for the chosen month" },
+                  { icon: "✏️", text: "Click 'Draw Field' to start drawing a polygon" },
+                  { icon: "📍", text: "Click on the map to place vertices" },
+                  { icon: "🔷", text: "Click near the first point or 'Close Polygon' to finish" },
+                  { icon: "🛰️", text: "NDVI overlay loads for the selected region" },
                   { icon: "🌿", text: "Press Analyze to predict crop health" },
                 ].map((item) => (
                   <div key={item.text} className="flex items-start gap-2.5">
@@ -163,19 +179,21 @@ export function CropHealthPage() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Satellite · NDVI overlay
+                Satellite · Polygon Field Selection
               </span>
               <span className="text-xs text-muted-foreground">
-                {lat.toFixed(4)}, {lon.toFixed(4)} · {year}-{String(month).padStart(2, "0")}
+                {polygon.length} vertices · {date.getFullYear()}-{String(date.getMonth() + 1).padStart(2, "0")}
               </span>
             </div>
             <MapView
-              lat={lat}
-              lon={lon}
-              year={year}
-              month={month}
-              resultLabel={result}
-              onPickLocation={onPickLocation}
+              polygon={polygon}
+              year={date.getFullYear()}
+              month={date.getMonth() + 1}
+              resultLabel={null}
+              onAddVertex={onAddVertex}
+              onRemoveLastVertex={onRemoveLastVertex}
+              onClearPolygon={onClearPolygon}
+              onPolygonComplete={onPolygonComplete}
             />
           </div>
         </div>
