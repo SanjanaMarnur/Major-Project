@@ -183,7 +183,18 @@
 /* ─── Leaflet controls — light mode ─── */
 .leaflet-control-layers {
   border-radius: 10px !important;
+  padding: 8px 12px !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2) !important;
+}
+.leaflet-control-layers label {
+  font-size: 12px !important;
+  font-weight: 500 !important;
 }
 .leaflet-bar a {
   border-radius: 6px !important;
+}
+
+/* Move zoom control to bottom-left to avoid collision */
+.leaflet-top.leaflet-right {
+  z-index: 900;
 }
