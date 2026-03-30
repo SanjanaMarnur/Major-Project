@@ -52,10 +52,6 @@ export default function ResultsPage() {
 
   useEffect(() => {
     setMounted(true);
-    if (!localStorage.getItem("crop_auth")) {
-      router.push("/login");
-      return;
-    }
     const resultStr = sessionStorage.getItem("crop_analysis_result");
     const dStr = sessionStorage.getItem("crop_analysis_date");
     if (resultStr) {
@@ -64,7 +60,7 @@ export default function ResultsPage() {
     if (dStr) {
       setDateStr(dStr);
     }
-  }, [router]);
+  }, []);
 
   if (!mounted) return null;
 
