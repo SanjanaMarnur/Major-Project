@@ -95,7 +95,7 @@ export function MapSearch({ onSelect }: { onSelect: (lat: number, lon: number) =
                     setOpen(false);
                     onSelect(parseFloat(r.lat), parseFloat(r.lon));
                   }}
-                  className="w-full text-left px-3 py-2 text-xs hover:bg-muted text-foreground transition-colors truncate"
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-muted text-foreground transition-colors truncate cursor-pointer"
                   title={r.display_name}
                 >
                   {r.display_name}
