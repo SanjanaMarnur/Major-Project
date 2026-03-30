@@ -70,7 +70,7 @@ export function ControlsCard({
           <div className="w-full relative">
             <Popover>
               <PopoverTrigger
-                className="w-full flex items-center justify-start h-9 text-left font-normal bg-background border border-input rounded-md px-3 hover:bg-accent hover:text-accent-foreground text-sm"
+                className="w-full flex items-center justify-start h-9 text-left font-normal bg-background border border-input rounded-md px-3 hover:bg-accent hover:text-accent-foreground text-sm cursor-pointer"
               >
                 <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
                 <span>
@@ -87,6 +87,9 @@ export function ControlsCard({
                   }}
                   defaultMonth={date}
                   initialFocus
+                  captionLayout="dropdown"
+                  fromYear={2000}
+                  toYear={new Date().getFullYear() + 5}
                 />
               </PopoverContent>
             </Popover>
