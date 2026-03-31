@@ -105,6 +105,8 @@ def get_ndvi_image(geometry, year, month):
 
     composite = collection.median()
     ndvi = composite.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    
+    # Return tightly clipped polygon region as requested
     return ndvi.clip(geometry)
 
 
@@ -152,6 +154,27 @@ def api_analyze():
     crop_stage = get_crop_stage(month)
     monthly_status = [classify_ndvi(val) for val in ndvi_values]
 
+    # Generate tile url for the visual map overlay
+    ndvi_img = get_ndvi_image(geometry, year, month)
+    vis = {
+        "min": 0.0,
+        "max": 0.6,
+        "palette": ["red", "yellow", "green"],
+    }
+    map_id_dict = ee.Image(ndvi_img).getMapId(vis)
+    tile_url = map_id_dict['tile_fetcher'].url_format
+
+    # Calculate center for frontend map rendering
+    center_lat = 0
+    center_lon = 0
+    polygon_pts = data.get("polygon", [])
+    if polygon_pts:
+        center_lat = sum(p["lat"] for p in polygon_pts) / len(polygon_pts)
+        center_lon = sum(p["lon"] for p in polygon_pts) / len(polygon_pts)
+    else:
+        center_lat = float(data.get("lat", 0))
+        center_lon = float(data.get("lon", 0))
+
     return jsonify({
         "overall_health": overall_health,
         "seasonal_mean": round(seasonal_mean, 4),
@@ -159,7 +182,10 @@ def api_analyze():
         "selected_month_ndvi": round(selected_month_ndvi, 4),
         "crop_stage": crop_stage,
         "ndvi": [round(v, 4) for v in ndvi_values],
-        "monthly_status": monthly_status
+        "monthly_status": monthly_status,
+        "tile_url": tile_url,
+        "center": {"lat": center_lat, "lon": center_lon},
+        "polygon": polygon_pts
     })
 
 
@@ -200,26 +226,16 @@ def ndvi_map():
     ndvi = get_ndvi_image(geometry, year, month)
     vis = {
         "min": 0.0,
-        "max": 1.0,
+        "max": 0.6,
         "palette": [
-            "d73027",
-            "f46d43",
-            "fdae61",
-            "fee08b",
-            "d9ef8b",
-            "a6d96a",
-            "1a9850",
+            "red",
+            "yellow",
+            "green",
         ],
     }
 
     map_id_dict = ee.Image(ndvi).getMapId(vis)
-
-    tile_url = (
-        "https://earthengine.googleapis.com/map/"
-        + map_id_dict["mapid"]
-        + "/{z}/{x}/{y}?token="
-        + map_id_dict["token"]
-    )
+    tile_url = map_id_dict['tile_fetcher'].url_format
 
     return jsonify(
         {

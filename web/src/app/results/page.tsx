@@ -16,10 +16,23 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 import { ArrowLeft } from "lucide-react";
+import dynamic from "next/dynamic";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AnalyzeResponse } from "@/lib/types";
+
+const ResultMap = dynamic(
+  () => import("@/components/crop/ResultMap").then((m) => m.ResultMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[350px] w-full rounded-xl border border-border bg-muted animate-pulse flex items-center justify-center text-muted-foreground text-sm">
+        Loading Satellite Map…
+      </div>
+    ),
+  }
+);
 
 ChartJS.register(
   CategoryScale,
@@ -81,6 +94,9 @@ export default function ResultsPage() {
     crop_stage,
     ndvi,
     monthly_status,
+    tile_url,
+    center,
+    polygon
   } = data;
 
   const colorOverall = healthColor(overall_health);
@@ -177,6 +193,16 @@ export default function ResultsPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Visual Map rendering added here */}
+        <Card className="border-border/60 overflow-hidden">
+          <CardHeader className="pb-2 border-b border-border/40 bg-muted/20">
+            <CardTitle className="text-sm font-medium">Field NDVI Map Overlay</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4">
+            <ResultMap tileUrl={tile_url} center={center} polygon={polygon} />
+          </CardContent>
+        </Card>
 
         {/* Crop Stage */}
         <Card className="border-border/60 overflow-hidden">

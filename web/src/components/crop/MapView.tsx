@@ -264,7 +264,7 @@ export function MapView({
       if (!data?.tileUrl) return;
 
       if (ndviRef.current) map.removeLayer(ndviRef.current);
-      ndviRef.current = L.tileLayer(data.tileUrl, { opacity: 0.65 }).addTo(map);
+      ndviRef.current = L.tileLayer(data.tileUrl, { opacity: 1.0 }).addTo(map);
     }
 
     run();

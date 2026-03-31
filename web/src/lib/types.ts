@@ -6,5 +6,7 @@ export type AnalyzeResponse = {
   crop_stage: string;
   ndvi: number[];
   monthly_status: string[];
+  tile_url?: string;
+  center?: { lat: number; lon: number };
+  polygon?: Array<{ lat: number; lon: number }>;
 };
-
